@@ -3,6 +3,7 @@ kind: Deployment
 
 metadata:
   name: smart-industrial-ai-platform
+  namespace: default
 
 spec:
   replicas: 1

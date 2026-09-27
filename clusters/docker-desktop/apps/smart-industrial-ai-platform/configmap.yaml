@@ -3,6 +3,7 @@ kind: ConfigMap
 
 metadata:
   name: smart-industrial-ai-config
+  namespace: default
 
 data:
   MLFLOW_TRACKING_URI: "http://192.168.178.166:5001"
