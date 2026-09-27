@@ -31,3 +31,8 @@ mlartifacts/
 
 
 artifacts/
+
+# MLflow local state
+mlflow.db
+mlruns/
+mlartifacts/
