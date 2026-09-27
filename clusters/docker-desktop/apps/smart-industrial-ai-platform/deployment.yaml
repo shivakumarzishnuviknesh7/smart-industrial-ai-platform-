@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: smart-industrial-ai-platform
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: smart-industrial-ai-platform
+
+  template:
+    metadata:
+      labels:
+        app: smart-industrial-ai-platform
+
+    spec:
+      containers:
+        - name: smart-industrial-ai-platform
+
+          image: smart-industrial-ai-platform:0.1
+
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 8000
+
+          env:
+            - name: MLFLOW_TRACKING_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: smart-industrial-ai-config
+                  key: MLFLOW_TRACKING_URI
+
+          # ---------------------------------------------
+          # Startup Probe
+          #
+          # Kubernetes waits for the application and
+          # MLflow model to finish loading before
+          # enabling liveness/readiness checks.
+          # ---------------------------------------------
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+
+            periodSeconds: 5
+
+            timeoutSeconds: 2
+
+            failureThreshold: 36
+
+          # Maximum startup allowance:
+          # 36 x 5 seconds = 180 seconds
+
+          # ---------------------------------------------
+          # Readiness Probe
+          #
+          # Determines whether the pod is ready to
+          # receive traffic.
+          # ---------------------------------------------
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+
+            periodSeconds: 5
+
+            timeoutSeconds: 2
+
+            failureThreshold: 3
+
+          # ---------------------------------------------
+          # Liveness Probe
+          #
+          # Determines whether the application is
+          # still healthy after startup.
+          # ---------------------------------------------
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+
+            periodSeconds: 10
+
+            timeoutSeconds: 2
+
+            failureThreshold: 3
