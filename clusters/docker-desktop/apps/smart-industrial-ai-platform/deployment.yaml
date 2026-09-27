@@ -21,9 +21,9 @@ spec:
       containers:
         - name: smart-industrial-ai-platform
 
-          image: smart-industrial-ai-platform:0.1
+          image: registry.gitlab.com/zishnu-mlops/smart-industrial-ai-platform:580ef996
 
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
 
           ports:
             - containerPort: 8000
