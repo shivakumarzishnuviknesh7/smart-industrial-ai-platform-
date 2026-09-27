@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
+from time import perf_counter
 from typing import List
 
 import mlflow.pytorch
 import torch
 from fastapi import FastAPI, HTTPException
+from prometheus_client import Counter, Histogram, make_asgi_app
 from pydantic import BaseModel, Field
 
 
@@ -12,7 +14,6 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------
 
 REGISTERED_MODEL_NAME = "industrial-baseline-cnn"
-
 MODEL_ALIAS = "champion"
 
 MODEL_URI = (
@@ -40,6 +41,26 @@ CLASS_NAMES = {
 
 
 # ---------------------------------------------------------
+# Prometheus metrics
+# ---------------------------------------------------------
+
+PREDICTION_REQUESTS = Counter(
+    "prediction_requests_total",
+    "Total number of prediction requests.",
+)
+
+PREDICTION_ERRORS = Counter(
+    "prediction_errors_total",
+    "Total number of failed prediction requests.",
+)
+
+PREDICTION_LATENCY = Histogram(
+    "prediction_latency_seconds",
+    "Prediction request processing time in seconds.",
+)
+
+
+# ---------------------------------------------------------
 # Global model container
 # ---------------------------------------------------------
 
@@ -53,7 +74,6 @@ model = None
 class PredictionRequest(BaseModel):
     """
     Input must contain a 28 x 28 grayscale image.
-
     Pixel values should be between 0 and 255.
     """
 
@@ -68,13 +88,9 @@ class PredictionRequest(BaseModel):
 
 class PredictionResponse(BaseModel):
     predicted_class: int
-
     predicted_label: str
-
     confidence: float
-
     model_name: str
-
     model_alias: str
 
 
@@ -89,14 +105,11 @@ def load_champion_model():
     """
 
     print(
-        f"Loading model from: "
-        f"{MODEL_URI}"
+        f"Loading model from: {MODEL_URI}"
     )
 
-    loaded_model = (
-        mlflow.pytorch.load_model(
-            MODEL_URI
-        )
+    loaded_model = mlflow.pytorch.load_model(
+        MODEL_URI
     )
 
     loaded_model.eval()
@@ -135,8 +148,20 @@ app = FastAPI(
         "champion model stored in the "
         "MLflow Model Registry."
     ),
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
+)
+
+
+# ---------------------------------------------------------
+# Prometheus endpoint
+# ---------------------------------------------------------
+
+metrics_app = make_asgi_app()
+
+app.mount(
+    "/metrics",
+    metrics_app,
 )
 
 
@@ -208,149 +233,162 @@ def predict(
     request: PredictionRequest,
 ):
 
-    if model is None:
+    PREDICTION_REQUESTS.inc()
 
-        raise HTTPException(
-            status_code=503,
-            detail="Model is not loaded.",
-        )
+    start_time = perf_counter()
 
-    # -----------------------------------------------------
-    # Validate image dimensions
-    # -----------------------------------------------------
+    try:
 
-    if len(request.pixels) != 28:
+        if model is None:
 
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Image must contain "
-                "exactly 28 rows."
-            ),
-        )
+            raise HTTPException(
+                status_code=503,
+                detail="Model is not loaded.",
+            )
 
-    for row in request.pixels:
+        # -------------------------------------------------
+        # Validate image dimensions
+        # -------------------------------------------------
 
-        if len(row) != 28:
+        if len(request.pixels) != 28:
 
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Each image row must "
-                    "contain exactly "
-                    "28 pixels."
+                    "Image must contain "
+                    "exactly 28 rows."
                 ),
             )
 
-    # -----------------------------------------------------
-    # Convert input to tensor
-    # -----------------------------------------------------
+        for row in request.pixels:
 
-    image = torch.tensor(
-        request.pixels,
-        dtype=torch.float32,
-    )
+            if len(row) != 28:
 
-    # -----------------------------------------------------
-    # Validate pixel range
-    # -----------------------------------------------------
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Each image row must "
+                        "contain exactly "
+                        "28 pixels."
+                    ),
+                )
 
-    if (
-        torch.any(image < 0)
-        or torch.any(image > 255)
-    ):
+        # -------------------------------------------------
+        # Convert input to tensor
+        # -------------------------------------------------
 
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Pixel values must be "
-                "between 0 and 255."
-            ),
+        image = torch.tensor(
+            request.pixels,
+            dtype=torch.float32,
         )
 
-    # -----------------------------------------------------
-    # Match training preprocessing
-    #
-    # Training:
-    # ToTensor() -> [0, 1]
-    # Normalize(0.5, 0.5) -> [-1, 1]
-    # -----------------------------------------------------
+        # -------------------------------------------------
+        # Validate pixel range
+        # -------------------------------------------------
 
-    image = image / 255.0
+        if (
+            torch.any(image < 0)
+            or torch.any(image > 255)
+        ):
 
-    image = (
-        image - 0.5
-    ) / 0.5
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Pixel values must be "
+                    "between 0 and 255."
+                ),
+            )
 
-    # Shape:
-    #
-    # [28, 28]
-    #      ↓
-    # [1, 1, 28, 28]
+        # -------------------------------------------------
+        # Match training preprocessing
+        #
+        # Training:
+        # ToTensor() -> [0, 1]
+        # Normalize(0.5, 0.5) -> [-1, 1]
+        # -------------------------------------------------
 
-    image = (
-        image
-        .unsqueeze(0)
-        .unsqueeze(0)
-    )
+        image = image / 255.0
 
-    # -----------------------------------------------------
-    # Inference
-    # -----------------------------------------------------
+        image = (
+            image - 0.5
+        ) / 0.5
 
-    model.eval()
+        # Shape:
+        #
+        # [28, 28]
+        #      ↓
+        # [1, 1, 28, 28]
 
-    with torch.no_grad():
-
-        logits = model(
+        image = (
             image
+            .unsqueeze(0)
+            .unsqueeze(0)
         )
 
-        probabilities = (
-            torch.softmax(
+        # -------------------------------------------------
+        # Inference
+        # -------------------------------------------------
+
+        model.eval()
+
+        with torch.no_grad():
+
+            logits = model(
+                image
+            )
+
+            probabilities = torch.softmax(
                 logits,
                 dim=1,
             )
-        )
 
-        confidence, prediction = (
-            torch.max(
+            confidence, prediction = torch.max(
                 probabilities,
                 dim=1,
             )
-        )
 
-    predicted_class = (
-        prediction.item()
-    )
+        predicted_class = prediction.item()
 
-    predicted_label = (
-        CLASS_NAMES[
+        predicted_label = CLASS_NAMES[
             predicted_class
         ]
-    )
 
-    prediction_confidence = (
-        confidence.item()
-    )
+        prediction_confidence = confidence.item()
 
-    # -----------------------------------------------------
-    # Response
-    # -----------------------------------------------------
+        # -------------------------------------------------
+        # Response
+        # -------------------------------------------------
 
-    return PredictionResponse(
-        predicted_class=
-            predicted_class,
+        return PredictionResponse(
+            predicted_class=
+                predicted_class,
 
-        predicted_label=
-            predicted_label,
+            predicted_label=
+                predicted_label,
 
-        confidence=
-            prediction_confidence,
+            confidence=
+                prediction_confidence,
 
-        model_name=
-            REGISTERED_MODEL_NAME,
+            model_name=
+                REGISTERED_MODEL_NAME,
 
-        model_alias=
-            MODEL_ALIAS,
-    )
+            model_alias=
+                MODEL_ALIAS,
+        )
+
+    except Exception:
+
+        PREDICTION_ERRORS.inc()
+
+        raise
+
+    finally:
+
+        duration = (
+            perf_counter()
+            - start_time
+        )
+
+        PREDICTION_LATENCY.observe(
+            duration
+        )
