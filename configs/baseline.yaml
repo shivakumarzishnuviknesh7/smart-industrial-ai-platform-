@@ -1,0 +1,21 @@
+project:
+  name: smart-industrial-ai-platform
+  seed: 42
+
+model:
+  name: baseline_cnn
+  num_classes: 10
+
+training:
+  epochs: 5
+  batch_size: 64
+  learning_rate: 0.001
+
+data:
+  dataset: fashion_mnist
+  data_dir: ./data
+  train_split: 0.8
+  num_workers: 2
+
+mlflow:
+  experiment_name: industrial-ml-platform-v2

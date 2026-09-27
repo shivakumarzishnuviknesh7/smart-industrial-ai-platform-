@@ -1,0 +1,11 @@
+torch
+torchvision
+mlflow
+pyyaml
+scikit-learn
+numpy
+fastapi
+uvicorn[standard]
+pydantic
+requests
+pytest

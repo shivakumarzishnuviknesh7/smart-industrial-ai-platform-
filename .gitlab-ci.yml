@@ -1,0 +1,90 @@
+stages:
+  - test
+  - build
+
+
+# ----------------------------------------------------------
+# Global variables
+# ----------------------------------------------------------
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+  DOCKER_HOST: "tcp://docker:2375"
+  DOCKER_TLS_CERTDIR: ""
+
+
+# ----------------------------------------------------------
+# Cache Python packages
+# ----------------------------------------------------------
+
+cache:
+  paths:
+    - .cache/pip/
+
+
+# ----------------------------------------------------------
+# Stage 1: Test
+# ----------------------------------------------------------
+
+python-tests:
+  stage: test
+
+  image: python:3.13-slim
+
+  before_script:
+    - python --version
+    - pip install --upgrade pip
+    - pip install -r requirements.txt
+
+  script:
+    - python -m compileall src
+    - pytest -v
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+
+
+# ----------------------------------------------------------
+# Stage 2: Docker Build + Push
+# ----------------------------------------------------------
+
+docker-build:
+  stage: build
+
+  image: docker:27-cli
+
+  services:
+    - name: docker:27-dind
+      alias: docker
+
+  before_script:
+    - docker --version
+
+    - echo "$CI_REGISTRY_PASSWORD" |
+      docker login
+      -u "$CI_REGISTRY_USER"
+      --password-stdin
+      "$CI_REGISTRY"
+
+  script:
+    # Unique image for this Git commit
+    - export IMAGE_TAG="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+
+    - echo "Building image $IMAGE_TAG"
+
+    - docker build
+      -t "$IMAGE_TAG"
+      .
+
+    - docker push "$IMAGE_TAG"
+
+    # Main branch also gets a latest tag
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        docker tag "$IMAGE_TAG" "$CI_REGISTRY_IMAGE:latest"
+        docker push "$CI_REGISTRY_IMAGE:latest"
+      fi
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH'

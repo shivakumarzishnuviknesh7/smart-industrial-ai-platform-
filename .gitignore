@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+venv/
+
+# Dataset
+data/
+
+# MLflow local artifacts
+mlruns/
+mlartifacts/
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Environment variables
+.env
+
+# Model artifacts
+*.pt
+*.pth
+*.onnx
+*.engine
+
+
+artifacts/
